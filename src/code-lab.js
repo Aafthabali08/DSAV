@@ -115,6 +115,11 @@ const labels = {
   javascript: "JavaScript",
 };
 import { browserLanguages, runInBrowser } from "./browser-runtime.js";
+// Optional cloud compiler for C, C++ and Java on static hosts, set at build
+// time (e.g. a Vercel environment variable). See deploy/README.md.
+export const cloudRuntime = String(
+  import.meta.env?.VITE_RUNTIME_URL || "",
+).replace(/\/+$/, "");
 export const isLocalHost = (hostname = location.hostname) =>
   /^(localhost|127\.0\.0\.1|\[::1\]|::1)$/.test(hostname) ||
   hostname.endsWith(".localhost");
@@ -136,6 +141,8 @@ export function mountCodeLab(root) {
     requestId = 0,
     reconnectTimer = null,
     browserMode = false,
+    cloudReady = false,
+    cloudToken = "",
     connectionError = "";
   const q = (s) => root.querySelector(s);
   root.innerHTML = `<div class="lab-heading"><div><p class="eyebrow">03 / YOUR CODE. MADE VISIBLE.</p><h2>See what your code is thinking.</h2><p>Write it. Run it. Follow the values as your program unfolds.</p></div><button class="runtime-badge" id="runtime-check"><i></i><span>Connecting to runtime…</span> ↻</button></div><div class="lab-grid"><section class="editor-card"><div class="editor-top"><label for="code-language">Language <select id="code-language">${Object.entries(
@@ -183,7 +190,7 @@ export function mountCodeLab(root) {
       javascript: "main.js",
     }[language];
     q("#code-note").textContent =
-      browserMode && !browserLanguages.includes(language)
+      browserMode && !cloudRuntime && !browserLanguages.includes(language)
         ? "Needs the local runtime · Python and JS run here"
         : language === "java"
           ? "Use public class Main · JVM line tracing"
@@ -222,21 +229,52 @@ export function mountCodeLab(root) {
         : "The local compiler service is offline. Start the app with npm run dev; it launches the frontend and compiler together.";
     }
     browserMode = hostedWithoutRuntime;
-    if (browserMode && !browserLanguages.includes(language))
+    if (browserMode && !cloudRuntime && !browserLanguages.includes(language))
       q("#code-note").textContent =
         "Needs the local runtime · Python and JS run here";
-    q("#runtime-check span").textContent = browserMode
-      ? "Browser runtime · Python & JS"
-      : ready
-        ? "Runtime connected"
-        : "Reconnecting automatically…";
-    q("#runtime-check").classList.toggle("connected", ready);
-    q("#runtime-check").title = browserMode
-      ? "Python and JavaScript run in this browser. C, C++ and Java need the local Docker runtime (npm run dev)."
-      : connectionError || "All five language runtimes are available";
+    if (browserMode) await connectCloud();
+    else showBadge();
     q("#run-code").disabled = running;
     if (!ready && !hostedWithoutRuntime && !root.hidden)
       reconnectTimer = setTimeout(connect, 3000);
+  }
+  function showBadge() {
+    const badge = q("#runtime-check");
+    badge.querySelector("span").textContent = !browserMode
+      ? ready
+        ? "Runtime connected"
+        : "Reconnecting automatically…"
+      : !cloudRuntime
+        ? "Browser runtime · Python & JS"
+        : cloudReady
+          ? "Browser + cloud runtime · all 5 languages"
+          : "Browser runtime · cloud compiler offline";
+    badge.classList.toggle("connected", ready);
+    badge.title = !browserMode
+      ? connectionError || "All five language runtimes are available"
+      : !cloudRuntime
+        ? "Python and JavaScript run in this browser. C, C++ and Java need the local Docker runtime (npm run dev)."
+        : cloudReady
+          ? "Python and JavaScript run in this browser. C, C++ and Java run on the SortScope cloud compiler."
+          : "Python and JavaScript run in this browser. The cloud compiler for C, C++ and Java is not reachable right now.";
+  }
+  // Probes the cloud compiler used for C, C++ and Java on static hosts.
+  async function connectCloud() {
+    if (cloudRuntime) {
+      try {
+        const response = await fetch(cloudRuntime + "/api/runtime", {
+          signal: AbortSignal.timeout(7000),
+        });
+        if (!response.ok) throw Error("Cloud compiler unavailable.");
+        const health = await response.json();
+        cloudReady = Boolean(health.ready);
+        cloudToken = health.token || "";
+      } catch {
+        cloudReady = false;
+      }
+    }
+    showBadge();
+    return cloudReady;
   }
   function showMeasurements() {
     const m = result?.metrics || {};
@@ -279,7 +317,19 @@ export function mountCodeLab(root) {
       showError(connectionError);
       return;
     }
-    if (browserMode && !browserLanguages.includes(language)) {
+    const inBrowser = browserMode && browserLanguages.includes(language);
+    if (browserMode && !inBrowser && cloudRuntime && !cloudReady)
+      await connectCloud();
+    if (browserMode && !inBrowser && cloudRuntime && !cloudReady) {
+      running = false;
+      q("#run-code").disabled = false;
+      showError(
+        `The cloud compiler for ${labels[language]} is not reachable right now. Python and JavaScript still run in your browser. Try again in a moment.`,
+        { phase: "service" },
+      );
+      return;
+    }
+    if (browserMode && !inBrowser && !cloudRuntime) {
       running = false;
       q("#run-code").disabled = false;
       showError(
@@ -308,17 +358,20 @@ export function mountCodeLab(root) {
         code: submitted,
         stdin: q("#program-input").value,
       };
-      const response = browserMode
-        ? { ok: true }
-        : await fetch("/api/execute", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "X-SortScope-Token": token,
-            },
-            body: JSON.stringify(payload),
-          });
-      const data = browserMode
+      const execute = () =>
+        fetch((browserMode ? cloudRuntime : "") + "/api/execute", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-SortScope-Token": browserMode ? cloudToken : token,
+          },
+          body: JSON.stringify(payload),
+        });
+      let response = inBrowser ? { ok: true } : await execute();
+      // A restarted cloud compiler issues a new token; refresh once.
+      if (browserMode && response.status === 403 && (await connectCloud()))
+        response = await execute();
+      const data = inBrowser
         ? await runInBrowser(payload, (status) => {
             if (id === requestId && status === "loading")
               q("#output-text").textContent =
@@ -341,7 +394,7 @@ export function mountCodeLab(root) {
       position = 0;
       q("#output-text").textContent = data.stdout || "(No output)";
       q("#run-meta").textContent =
-        `${labels[language]} · ${events.length} events${data.durationMs ? ` · ${(data.durationMs / 1000).toFixed(2)}s ${browserMode ? "in this browser" : "including compiler/debugger"}` : ""}`;
+        `${labels[language]} · ${events.length} events${data.durationMs ? ` · ${(data.durationMs / 1000).toFixed(2)}s ${inBrowser ? "in this browser" : "including compiler/debugger"}` : ""}`;
       showMeasurements();
       if (data.error)
         showError(data.error, {
@@ -352,6 +405,10 @@ export function mountCodeLab(root) {
     } catch (e) {
       if (id === requestId) {
         result = { error: e.message };
+        if (browserMode && !inBrowser) {
+          cloudReady = false;
+          showBadge();
+        }
         showError("Could not reach the execution service. " + e.message);
       }
     } finally {

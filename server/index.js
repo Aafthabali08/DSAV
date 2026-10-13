@@ -5,11 +5,32 @@ import { spawn, execFile } from "node:child_process";
 import { randomUUID, randomBytes } from "node:crypto";
 import { promisify } from "node:util";
 import { instrument } from "./instrument.js";
+import {
+  parseOrigins,
+  isAllowedOrigin,
+  corsHeaders,
+  clientIp,
+  createRateLimiter,
+} from "./policy.js";
 const exec = promisify(execFile);
 const token = randomBytes(32).toString("hex");
 const port = Number(process.env.RUNNER_PORT || 7002),
   image = process.env.RUNNER_IMAGE || "sortscope-runner:local";
-let running = false;
+// Public deployments (see deploy/README.md) set these; local use needs none.
+const allowedOrigins = parseOrigins(process.env.ALLOWED_ORIGINS),
+  trustProxy = process.env.TRUST_PROXY === "1",
+  maxConcurrent = Math.max(1, Number(process.env.MAX_CONCURRENT) || 1),
+  limiters = [
+    createRateLimiter({
+      limit: Number(process.env.RATE_LIMIT_PER_MINUTE) || 0,
+      windowMs: 60 * 1000,
+    }),
+    createRateLimiter({
+      limit: Number(process.env.RATE_LIMIT_PER_HOUR) || 0,
+      windowMs: 60 * 60 * 1000,
+    }),
+  ];
+let active = 0;
 const languages = ["c", "cpp", "python", "java", "javascript"];
 async function health() {
   try {
@@ -105,6 +126,10 @@ function execute(payload) {
     child.stdin.end(JSON.stringify(payload));
   });
 }
+const busyMessage = () =>
+  maxConcurrent > 1
+    ? "The compiler is busy with other programs. Try again in a few seconds."
+    : "A program is already running. Try again in a moment.";
 function send(res, status, data) {
   res.writeHead(status, {
     "Content-Type": "application/json",
@@ -115,8 +140,14 @@ function send(res, status, data) {
 }
 const server = http.createServer(async (req, res) => {
   const origin = req.headers.origin;
-  if (origin && !/^http:\/\/(127\.0\.0\.1|localhost):(7000|7001)$/.test(origin))
+  if (!isAllowedOrigin(origin, allowedOrigins))
     return send(res, 403, { error: "Origin not allowed." });
+  for (const [k, v] of Object.entries(corsHeaders(origin, allowedOrigins)))
+    res.setHeader(k, v);
+  if (req.method === "OPTIONS") {
+    res.writeHead(204);
+    return res.end();
+  }
   if (req.method === "GET" && req.url === "/api/runtime")
     return send(res, 200, { ...(await health()), token });
   if (
@@ -166,10 +197,16 @@ const server = http.createServer(async (req, res) => {
     });
   if (!req.headers["content-type"]?.startsWith("application/json"))
     return send(res, 415, { error: "Use JSON." });
-  if (running)
-    return send(res, 429, {
-      error: "A program is already running. Try again in a moment.",
-    });
+  if (active >= maxConcurrent) return send(res, 429, { error: busyMessage() });
+  for (const limiter of limiters) {
+    const { allowed, retryAfter } = limiter.take(clientIp(req, trustProxy));
+    if (!allowed) {
+      res.setHeader("Retry-After", String(retryAfter));
+      return send(res, 429, {
+        error: `Run limit reached. Try again in ${retryAfter} seconds.`,
+      });
+    }
+  }
   let body = "",
     acquired = false;
   try {
@@ -205,11 +242,9 @@ const server = http.createServer(async (req, res) => {
         });
       }
     }
-    if (running)
-      return send(res, 429, {
-        error: "A program is already running. Try again in a moment.",
-      });
-    running = true;
+    if (active >= maxConcurrent)
+      return send(res, 429, { error: busyMessage() });
+    active++;
     acquired = true;
     const start = performance.now();
     const result = await execute(payload);
@@ -221,7 +256,7 @@ const server = http.createServer(async (req, res) => {
   } catch (e) {
     send(res, 400, { error: e.message, events: [] });
   } finally {
-    if (acquired) running = false;
+    if (acquired) active--;
   }
 });
 server.listen(port, "127.0.0.1", () =>
