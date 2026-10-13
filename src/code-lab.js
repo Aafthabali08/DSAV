@@ -180,7 +180,9 @@ export function mountCodeLab(root) {
   }
   function setLanguage() {
     stop();
-    language = q("#code-language").value;
+    const select = q("#code-language");
+    if (select.selectedOptions[0]?.disabled) select.value = language;
+    language = select.value;
     q("#source-code").value = drafts[language];
     q("#filename").textContent = {
       python: "main.py",
@@ -229,9 +231,20 @@ export function mountCodeLab(root) {
         : "The local compiler service is offline. Start the app with npm run dev; it launches the frontend and compiler together.";
     }
     browserMode = hostedWithoutRuntime;
-    if (browserMode && !cloudRuntime && !browserLanguages.includes(language))
-      q("#code-note").textContent =
-        "Needs the local runtime · Python and JS run here";
+    // Without a cloud compiler (VITE_RUNTIME_URL), C, C++ and Java are
+    // listed as coming soon; setting it enables all five languages.
+    if (browserMode && !cloudRuntime) {
+      const select = q("#code-language");
+      for (const option of [...select.options])
+        if (!browserLanguages.includes(option.value)) {
+          option.disabled = true;
+          option.textContent = `${labels[option.value]} · coming soon`;
+        }
+      if (!browserLanguages.includes(language)) {
+        select.value = browserLanguages[0];
+        setLanguage();
+      }
+    }
     if (browserMode) await connectCloud();
     else showBadge();
     q("#run-code").disabled = running;
@@ -245,7 +258,7 @@ export function mountCodeLab(root) {
         ? "Runtime connected"
         : "Reconnecting automatically…"
       : !cloudRuntime
-        ? "Browser runtime · Python & JS"
+        ? "Python & JS · more languages soon"
         : cloudReady
           ? "Browser + cloud runtime · all 5 languages"
           : "Browser runtime · cloud compiler offline";
@@ -253,7 +266,7 @@ export function mountCodeLab(root) {
     badge.title = !browserMode
       ? connectionError || "All five language runtimes are available"
       : !cloudRuntime
-        ? "Python and JavaScript run in this browser. C, C++ and Java need the local Docker runtime (npm run dev)."
+        ? "Python and JavaScript run in this browser. C, C++ and Java are coming soon."
         : cloudReady
           ? "Python and JavaScript run in this browser. C, C++ and Java run on the SortScope cloud compiler."
           : "Python and JavaScript run in this browser. The cloud compiler for C, C++ and Java is not reachable right now.";
@@ -509,7 +522,8 @@ export function mountCodeLab(root) {
         return `<div class="${n === line ? "executing" : ""}"><span>${n}</span><code>${escapeHtml(text) || " "}</code></div>`;
       })
       .join("");
-    container.innerHTML = `<div class="source-excerpt">${excerpt}</div><div class="event-explanation"><span>↳</span><p><b>${event.event === "complete" ? "Execution has finished." : event.event === "return" ? "Returning from this function." : `Paused before line ${line}.`}</b><small>${changes.length ? `Changed since the previous event: ${escapeHtml(changes.join(", "))}.` : "Inspect the current values, then step forward to execute the next instruction."}</small></p></div><div class="memory-toolbar"><span>VARIABLES & MEMORY</span><div><button data-memory="cells" class="${view === "cells" ? "active" : ""}">▦ Cells</button><button data-memory="bars" class="${view === "bars" ? "active" : ""}">▥ Bars</button></div></div><label class="diagram-selector">Focus variable <select id="focus-variable"><option value="">All variables</option>${names.map((name) => `<option value="${escapeHtml(name)}" ${focusedVariable === name ? "selected" : ""}>${escapeHtml(name)}</option>`).join("")}</select></label><div class="memory-view">${
+    const playbackHtml = `<div class="code-playback"><div><button id="code-reset" aria-label="Restart execution replay">↺</button><button id="code-prev" aria-label="Previous code step" ${position === 0 ? "disabled" : ""}>↤</button><button id="code-play" class="dark">${playing ? "Ⅱ Pause" : "▶ Play story"}</button><button id="code-next" aria-label="Next code step" ${position === events.length - 1 ? "disabled" : ""}>↦</button><select id="code-speed" aria-label="Code playback speed"><option value="1000">0.5×</option><option value="500" selected>1×</option><option value="250">2×</option><option value="125">4×</option></select></div><input id="code-scrub" type="range" min="0" max="${events.length - 1}" value="${position}" aria-label="Code execution position"><div class="timeline-labels"><span>EVENT ${position + 1} / ${events.length}</span><span>${escapeHtml(result?.traceKind || "Execution trace")}</span></div></div>`;
+    const snapshotHtml = `<div class="source-excerpt">${excerpt}</div><div class="event-explanation"><span>↳</span><p><b>${event.event === "complete" ? "Execution has finished." : event.event === "return" ? "Returning from this function." : `Paused before line ${line}.`}</b><small>${changes.length ? `Changed since the previous event: ${escapeHtml(changes.join(", "))}.` : "Inspect the current values, then step forward to execute the next instruction."}</small></p></div><div class="memory-toolbar"><span>VARIABLES & MEMORY</span><div><button data-memory="cells" class="${view === "cells" ? "active" : ""}">▦ Cells</button><button data-memory="bars" class="${view === "bars" ? "active" : ""}">▥ Bars</button></div></div><label class="diagram-selector">Focus variable <select id="focus-variable"><option value="">All variables</option>${names.map((name) => `<option value="${escapeHtml(name)}" ${focusedVariable === name ? "selected" : ""}>${escapeHtml(name)}</option>`).join("")}</select></label><div class="memory-view">${
       names.length
         ? names
             .filter(
@@ -527,29 +541,41 @@ export function mountCodeLab(root) {
             )
             .join("")
         : '<p class="muted">No local variables have been assigned yet. Step forward.</p>'
-    }</div><details class="stack-details"><summary>Call stack · ${event.frames?.length || 0} frames</summary>${(event.frames || []).map((f, i) => `<div><span>${i === 0 ? "↳" : "↥"}</span><b>${escapeHtml(f.name)}</b><small>${f.generated ? "generated " : ""}line ${f.line}</small></div>`).join("")}</details><details class="step-output"><summary>Output at this step</summary><pre>${escapeHtml(event.stdout || "(No output yet)")}</pre></details><div class="code-playback"><div><button id="code-reset" aria-label="Restart execution replay">↺</button><button id="code-prev" aria-label="Previous code step" ${position === 0 ? "disabled" : ""}>↤</button><button id="code-play" class="dark">${playing ? "Ⅱ Pause" : "▶ Play story"}</button><button id="code-next" aria-label="Next code step" ${position === events.length - 1 ? "disabled" : ""}>↦</button><select id="code-speed" aria-label="Code playback speed"><option value="1000">0.5×</option><option value="500" selected>1×</option><option value="250">2×</option><option value="125">4×</option></select></div><input id="code-scrub" type="range" min="0" max="${events.length - 1}" value="${position}" aria-label="Code execution position"><div class="timeline-labels"><span>EVENT ${position + 1} / ${events.length}</span><span>${escapeHtml(result?.traceKind || "Execution trace")}</span></div></div>`;
-    // Keep playback controls mounted so a rapid trace update cannot discard a click.
-    if (previousPlayback) {
-      const nextPlayback = container.querySelector(".code-playback");
-      for (const fresh of nextPlayback.querySelectorAll(
+    }</div><details class="stack-details"><summary>Call stack · ${event.frames?.length || 0} frames</summary>${(event.frames || []).map((f, i) => `<div><span>${i === 0 ? "↳" : "↥"}</span><b>${escapeHtml(f.name)}</b><small>${f.generated ? "generated " : ""}line ${f.line}</small></div>`).join("")}</details><details class="step-output"><summary>Output at this step</summary><pre>${escapeHtml(event.stdout || "(No output yet)")}</pre></details>`;
+    // Keep playback controls mounted (never detached) so clicks and hover
+    // state survive rapid trace updates; only the snapshot below re-renders.
+    const snapshot = container.querySelector(".code-snapshot");
+    if (previousPlayback && snapshot) {
+      const fresh = document.createElement("div");
+      fresh.innerHTML = playbackHtml;
+      for (const next of fresh.querySelectorAll(
         "button, input, .timeline-labels span",
       )) {
-        const old = fresh.id
-          ? previousPlayback.querySelector(`#${fresh.id}`)
+        const old = next.id
+          ? previousPlayback.querySelector(`#${next.id}`)
           : previousPlayback.querySelectorAll(".timeline-labels span")[
-              [...fresh.parentNode.children].indexOf(fresh)
+              [...next.parentNode.children].indexOf(next)
             ];
         if (!old) continue;
-        if (fresh.tagName === "INPUT") {
-          old.max = fresh.max;
-          old.value = fresh.value;
+        if (next.tagName === "INPUT") {
+          old.max = next.max;
+          old.value = next.value;
         } else {
-          old.innerHTML = fresh.innerHTML;
-          if (fresh.tagName === "BUTTON") old.disabled = fresh.disabled;
+          if (old.innerHTML !== next.innerHTML) old.innerHTML = next.innerHTML;
+          if (next.tagName === "BUTTON") old.disabled = next.disabled;
         }
       }
-      nextPlayback.replaceWith(previousPlayback);
-    }
+      snapshot.innerHTML = snapshotHtml;
+    } else
+      container.innerHTML = `${playbackHtml}<div class="code-snapshot">${snapshotHtml}</div>`;
+    // Never shrink during a replay, so the page does not jump while playing.
+    const snapshotArea = container.querySelector(".code-snapshot");
+    const height = Math.max(
+      snapshotArea.offsetHeight,
+      Number(snapshotArea.dataset.minHeight) || 0,
+    );
+    snapshotArea.dataset.minHeight = height;
+    snapshotArea.style.minHeight = height + "px";
     q(".memory-view").scrollTop = memoryScroll;
     q("#focus-variable").onchange = (event) => {
       focusedVariable = event.target.value;

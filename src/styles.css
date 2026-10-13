@@ -2020,9 +2020,11 @@ th {
   overflow-wrap: anywhere;
   font: 11px/1.6 monospace;
 }
+/* Above the snapshot, so changing variable heights never move the controls. */
 .code-playback {
-  border-top: 1px solid var(--tone-ddd);
-  padding-top: 15px;
+  border-bottom: 1px solid var(--tone-ddd);
+  padding-bottom: 4px;
+  margin-bottom: 16px;
 }
 .code-playback > div:first-child {
   display: flex;
