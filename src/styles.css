@@ -984,6 +984,13 @@ h2 {
 .full {
   grid-column: 1/-1;
 }
+/* Let wide content (comparison table) scroll inside its card on phones. */
+#details > * {
+  min-width: 0;
+}
+.info-card.full {
+  overflow-x: auto;
+}
 footer {
   display: flex;
   justify-content: space-between;
@@ -1400,6 +1407,10 @@ th {
   }
   .info-card {
     padding: 23px;
+  }
+  .info-card td,
+  .info-card th {
+    padding: 10px 8px;
   }
   .structure-content {
     grid-template-columns: 1fr;

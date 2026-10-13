@@ -90,6 +90,15 @@ test("structures, keyboard, desktop and mobile", async ({ page }, testInfo) => {
       () => document.documentElement.scrollWidth <= innerWidth,
     ),
   ).toBe(true);
+  for (const mode of ["compare", "structures", "code", "learn"]) {
+    await page.locator(`[data-mode="${mode}"]`).click();
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth,
+      ),
+      `${mode} fits a 360px viewport`,
+    ).toBe(true);
+  }
   await page.screenshot({
     path: `screenshots/${testInfo.project.name}-mobile.png`,
     fullPage: true,
