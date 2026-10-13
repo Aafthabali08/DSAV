@@ -1,12 +1,14 @@
-# Verification record — 12 October 2026
+# Verification record — 12–13 October 2026
 
 ## Current result
 
-- **15 unit tests passed** (`npm test`). Covers five sorting trace engines across supported input sizes, exact counter examples, parsing, deterministic playback bounds, all seven data structures and representative operations, graph edge validation, JavaScript instrumentation and async rejection, and execution of all five displayed JavaScript algorithm implementations.
-- **14 browser tests passed** (`npx playwright test --workers=1`): seven each in installed Google Chrome and Playwright WebKit. Covers sorting playback/rewind/reset, comparison, custom values, all structures, desktop/mobile overflow, reduced motion, real custom Python execution, all five compiler selectors, error display, time/memory metrics, automatic reconnect after HTTP failure, and pseudocode/source/both switching.
+Latest full run: 13 October 2026, on the code at commit `d82bfe4` (later commits change documentation only). Live site: https://sortscopea.vercel.app
+
+- **29 unit tests passed** (`npm test`). Covers five sorting trace engines across supported input sizes, exact counter examples, parsing, deterministic playback bounds, all 70 structure/operation combinations, graph edge validation, diagnostics, diagrams, JavaScript instrumentation and async rejection, execution of all five displayed JavaScript algorithm implementations, hosted-mode detection, and the compiler service's origin, proxy and rate-limit policy.
+- **30 local browser scenarios passed** (`npx playwright test --workers=1`): 15 each in installed Google Chrome and Playwright WebKit. Covers sorting playback/rewind/reset, comparison and export, custom values, all structures and operations, keyboard controls, no horizontal overflow on any page at 360px, reduced motion, themes, all five Code Lab languages, compiler/runtime errors, reconnect after HTTP failure, diagrams, and pseudocode/source switching.
 - **Five-language runtime suite passed** (`npm run test:runtime`). C, C++, Python 3, Java and JavaScript compiled/executed the supplied input and exposed sorted array snapshots. Also verifies custom Python call frames, C compiler diagnostics, Python runtime exceptions, trace limits, absence of host filesystem mounts, and blocked outbound network.
-- **Production build passed**. Built frontend and API served together on temporary port 7001; Chrome received HTTP 200 and ran actual C++ code with valid sorted output and measured execution/memory/compilation values, without application page errors. Temporary production server stopped afterward.
-- **Startup checked**. `npm run dev` starts frontend + API and prepares the cached Docker image. Development server remains on 127.0.0.1:7000; API on 127.0.0.1:7002.
+- **Live site: 42 scenarios passed, 2 skipped** across Chrome and WebKit against https://sortscopea.vercel.app (details below).
+- **Production build passed**; `npm audit` reports **0 vulnerabilities**.
 
 ## Measurements and limitations
 
@@ -14,7 +16,7 @@ Runtime wall/CPU/peak RSS measurements come from Linux `wait4` around the execut
 
 The supported scope is five sorting algorithms, seven editable data structures, and the five documented programming languages. This is not every DSA topic. C/C++ tracing steps over function calls; JavaScript replay supports synchronous statements and identifies generated stack locations. Complex values are bounded previews. WebKit testing is a Safari-engine check, not the Safari application. No physical-device or formal accessibility-conformance audit was performed.
 
-The runtime is configured for local use. A static-only deployment cannot execute native code; public multi-user hosting needs a dedicated authenticated, rate-limited execution service. See `server/README.md`.
+On the live site, Python and JavaScript run in the visitor's browser; C, C++ and Java are listed as coming soon until a cloud compiler is configured with `VITE_RUNTIME_URL` (see `deploy/README.md`). The cloud compiler adds origin allowlisting, per-IP rate limits and a concurrency cap; it is suitable for a personal learning site, not certified as a hardened multi-tenant execution platform. Browser runs report wall time only; peak memory and CPU time come from the Docker runner.
 
 ## Artifacts
 
@@ -53,3 +55,21 @@ The local services remain running on ports 7000 and 7002. This is a development 
 - Earlier in-progress run had a diagnostics check interrupted by Vite hot reload; the diagnostics scenario passed on the subsequent stable run.
 - Inspected the Code Lab screenshot with the root variable focused: parent-child edges and L/R labels are visible in dark mode. Mobile width checks passed.
 - Diagram semantics remain bounded and heuristic for arbitrary code; explicit interpretation and raw captured fields are available. The educational operations are listed in README, not claimed to cover every variant of every structure.
+
+## Deployment, browser runtime and live testing — 2026-10-13
+
+**Vercel deployment.** Added `vercel.json` (Vite build, `dist` output, immutable asset caching, `nosniff`, `DENY` framing and referrer-policy headers). Verified on the live site: HTTP 200, all three security headers present, `/api/runtime` returns 404 as expected for a static host. A clean checkout ran `npm ci`, build and unit tests successfully before the first push.
+
+**Hosted Code Lab.** On a non-local host, Code Lab traces Python (Pyodide 0.28.3) and JavaScript (Web Worker) in the browser, reusing `server/runtime/python_trace.py` and `server/instrument.js`. Tested on a static copy of `dist/` under a non-local hostname in Chrome and WebKit: sorting examples, Python traceback and syntax errors, JavaScript runtime errors, the 1,500-event limit, a 12-second hard timeout for `while (true) {}` with recovery on the next run, and no page errors.
+
+**Problems found and fixed during this work:**
+
+- **Live deploy did not update.** `.vercelignore` excluded `server/`, which the browser runtime imports, so the Vercel build failed and the previous deployment stayed live. Reproduced by building with the ignored files removed; fixed by including `server/`. The live site then served the new build.
+- **Comparison card overflowed phone screens.** At 360px the four-column table widened its grid card by 12px, causing horizontal page scroll on Compare. Fixed in CSS; the mobile browser test now checks every page for overflow.
+- **Code Lab Pause button moved during playback.** Each step changed the snapshot height and re-attached the controls, moving the button by up to about 130px and restarting its hover transition, so clicks could miss. This was the cause of an intermittent WebKit failure in `controls.spec.js` (2 of 6 runs failed on the previous commit). Controls now sit above the snapshot, stay mounted, and the snapshot no longer shrinks during a replay. The button position stayed constant (within 1px) and the scenario passed 10 of 10 repetitions in each engine.
+
+**Cloud compiler (prepared, not deployed).** `server/policy.js` adds an exact-origin CORS allowlist, proxy-aware client IP, per-minute/per-hour rate limits and a concurrency cap, all disabled by default. Verified locally with a public-mode server instance: preflight 204 with CORS headers for the allowed origin, 403 for other origins and invalid tokens, 429 after the per-minute limit. With `VITE_RUNTIME_URL` set, C, C++ and Java ran through it in Chrome and WebKit (output, traces, compile errors and a Java exception), while Python and JavaScript stayed in the browser. A down server showed "cloud compiler offline" with Python still working, and a restarted server (new token) was reconnected automatically. `deploy/setup.sh` was checked with `bash -n`; in a Debian 12 container the required packages resolved, the Node.js checksum verified, Caddy accepted the generated config, and the Oracle-style iptables rules for ports 80/443 were inserted before the reject rule without duplicates. Shellcheck could not be run (image download stalled), and the full script has not been executed on a real server.
+
+**Live site results (commit `d82bfe4`).** 42 scenarios passed and 2 were skipped in Chrome and WebKit against https://sortscopea.vercel.app, using a copy of the browser suite adjusted for hosting: five-language checks limited to Python and JavaScript, the peak-memory assertion relaxed because browsers show "—", and the local-server reconnect scenario skipped. Added live checks: C/C++/Java appear as disabled "coming soon" options and cannot be selected, Pause stops playback immediately, every visible button on every page can be clicked without page errors, and no page overflows horizontally at 320, 360 or 768px.
+
+**Note on test conditions.** One local run took 28 minutes instead of about 1 minute because the machine was overloaded (load average up to 18 from unrelated macOS processes); sorting-engine unit tests timed out at about 185 to 288 seconds each. All suites were rerun after the load dropped and passed with normal durations (unit tests about 8 seconds). The timeouts were environmental, not code failures.
