@@ -114,6 +114,7 @@ const labels = {
   java: "Java 17",
   javascript: "JavaScript",
 };
+import { browserLanguages, runInBrowser } from "./browser-runtime.js";
 export const isLocalHost = (hostname = location.hostname) =>
   /^(localhost|127\.0\.0\.1|\[::1\]|::1)$/.test(hostname) ||
   hostname.endsWith(".localhost");
@@ -134,6 +135,7 @@ export function mountCodeLab(root) {
     focusedVariable = "",
     requestId = 0,
     reconnectTimer = null,
+    browserMode = false,
     connectionError = "";
   const q = (s) => root.querySelector(s);
   root.innerHTML = `<div class="lab-heading"><div><p class="eyebrow">03 / YOUR CODE. MADE VISIBLE.</p><h2>See what your code is thinking.</h2><p>Write it. Run it. Follow the values as your program unfolds.</p></div><button class="runtime-badge" id="runtime-check"><i></i><span>Connecting to runtime…</span> ↻</button></div><div class="lab-grid"><section class="editor-card"><div class="editor-top"><label for="code-language">Language <select id="code-language">${Object.entries(
@@ -181,20 +183,24 @@ export function mountCodeLab(root) {
       javascript: "main.js",
     }[language];
     q("#code-note").textContent =
-      language === "java"
-        ? "Use public class Main · JVM line tracing"
-        : language === "c" || language === "cpp"
-          ? "Debugger snapshots · calls are stepped over"
-          : language === "javascript"
-            ? "Statement tracing · stdin is the string input"
-            : "Automatic line tracing · no annotations needed";
+      browserMode && !browserLanguages.includes(language)
+        ? "Needs the local runtime · Python and JS run here"
+        : language === "java"
+          ? "Use public class Main · JVM line tracing"
+          : language === "c" || language === "cpp"
+            ? "Debugger snapshots · calls are stepped over"
+            : language === "javascript"
+              ? "Statement tracing · stdin is the string input"
+              : "Automatic line tracing · no annotations needed";
     syncEditor();
     invalidate();
   }
   async function connect() {
     clearTimeout(reconnectTimer);
+    if (browserMode) return;
     q("#runtime-check span").textContent = "Connecting…";
-    // Static hosts (e.g. Vercel) have no compiler API; stop retrying there.
+    // Static hosts (e.g. Vercel) have no compiler API: run Python and
+    // JavaScript in the browser instead and stop retrying.
     let hostedWithoutRuntime = false;
     try {
       const response = await fetch("/api/runtime", {
@@ -210,19 +216,24 @@ export function mountCodeLab(root) {
       token = health.token;
       connectionError = health.error || "";
     } catch {
-      ready = false;
+      ready = hostedWithoutRuntime;
       connectionError = hostedWithoutRuntime
-        ? "Code Lab runs real compilers in Docker, so it is available only when you run SortScope locally (npm run dev). The visualizer, comparison and data structures work fully here."
+        ? ""
         : "The local compiler service is offline. Start the app with npm run dev; it launches the frontend and compiler together.";
     }
-    q("#runtime-check span").textContent = ready
-      ? "Runtime connected"
-      : hostedWithoutRuntime
-        ? "Local only · run npm run dev"
+    browserMode = hostedWithoutRuntime;
+    if (browserMode && !browserLanguages.includes(language))
+      q("#code-note").textContent =
+        "Needs the local runtime · Python and JS run here";
+    q("#runtime-check span").textContent = browserMode
+      ? "Browser runtime · Python & JS"
+      : ready
+        ? "Runtime connected"
         : "Reconnecting automatically…";
     q("#runtime-check").classList.toggle("connected", ready);
-    q("#runtime-check").title =
-      connectionError || "All five language runtimes are available";
+    q("#runtime-check").title = browserMode
+      ? "Python and JavaScript run in this browser. C, C++ and Java need the local Docker runtime (npm run dev)."
+      : connectionError || "All five language runtimes are available";
     q("#run-code").disabled = running;
     if (!ready && !hostedWithoutRuntime && !root.hidden)
       reconnectTimer = setTimeout(connect, 3000);
@@ -268,6 +279,15 @@ export function mountCodeLab(root) {
       showError(connectionError);
       return;
     }
+    if (browserMode && !browserLanguages.includes(language)) {
+      running = false;
+      q("#run-code").disabled = false;
+      showError(
+        `${labels[language]} needs a native compiler and debugger (GCC/GDB or the JVM), which cannot run in a browser. Switch to Python or JavaScript to run code here, or run SortScope locally with npm run dev for all five languages.`,
+        { phase: "service" },
+      );
+      return;
+    }
     const id = ++requestId;
     running = true;
     q("#run-code").disabled = true;
@@ -283,19 +303,30 @@ export function mountCodeLab(root) {
     position = 0;
     draw();
     try {
-      const response = await fetch("/api/execute", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-SortScope-Token": token,
-        },
-        body: JSON.stringify({
-          language,
-          code: submitted,
-          stdin: q("#program-input").value,
-        }),
-      });
-      const data = await response.json();
+      const payload = {
+        language,
+        code: submitted,
+        stdin: q("#program-input").value,
+      };
+      const response = browserMode
+        ? { ok: true }
+        : await fetch("/api/execute", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-SortScope-Token": token,
+            },
+            body: JSON.stringify(payload),
+          });
+      const data = browserMode
+        ? await runInBrowser(payload, (status) => {
+            if (id === requestId && status === "loading")
+              q("#output-text").textContent =
+                "Loading the in-browser Python runtime (first run downloads about 10 MB)…";
+            else if (id === requestId)
+              q("#output-text").textContent = "Executing your program…";
+          })
+        : await response.json();
       if (id !== requestId) return;
       result = data;
       events = Array.isArray(data.events) ? data.events : [];
@@ -310,7 +341,7 @@ export function mountCodeLab(root) {
       position = 0;
       q("#output-text").textContent = data.stdout || "(No output)";
       q("#run-meta").textContent =
-        `${labels[language]} · ${events.length} events${data.durationMs ? ` · ${(data.durationMs / 1000).toFixed(2)}s including compiler/debugger` : ""}`;
+        `${labels[language]} · ${events.length} events${data.durationMs ? ` · ${(data.durationMs / 1000).toFixed(2)}s ${browserMode ? "in this browser" : "including compiler/debugger"}` : ""}`;
       showMeasurements();
       if (data.error)
         showError(data.error, {
