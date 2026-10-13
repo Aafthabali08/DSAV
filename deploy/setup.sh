@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Sets up the SortScope cloud compiler (C, C++, Java, Python, JavaScript) on a
-# fresh Ubuntu 24.04 or Debian 12 server (2 GB RAM or more). Run as root:
+# fresh Ubuntu 24.04 or Debian 12 server (x86-64 or ARM). Works on free tiers:
+# Oracle Cloud Always Free (Ampere A1) and Google Cloud e2-micro (1 GB RAM). Run as root:
 #
 #   sudo bash deploy/setup.sh [ALLOWED_ORIGINS] [DOMAIN]
 #
@@ -26,7 +27,22 @@ esac
 echo "==> Installing system packages"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -q
-apt-get install -y -q ca-certificates curl git xz-utils ufw docker.io caddy
+apt-get install -y -q ca-certificates curl git xz-utils docker.io caddy
+
+# Small free-tier VMs (1 GB RAM): add swap and run one program at a time.
+MEM_KB="$(awk '/MemTotal/ {print $2}' /proc/meminfo)"
+CONCURRENT=2
+if [ "$MEM_KB" -lt 1900000 ]; then
+  CONCURRENT=1
+  if ! swapon --show | grep -q /swapfile; then
+    echo "==> Low memory: adding a 2 GB swap file"
+    fallocate -l 2G /swapfile || dd if=/dev/zero of=/swapfile bs=1M count=2048
+    chmod 600 /swapfile
+    mkswap /swapfile >/dev/null
+    swapon /swapfile
+    grep -q '^/swapfile' /etc/fstab || echo '/swapfile none swap sw 0 0' >>/etc/fstab
+  fi
+fi
 
 if [ -z "$DOMAIN" ]; then
   IP="$(curl -4fsS https://api.ipify.org)"
@@ -83,7 +99,7 @@ Environment=RUNNER_PORT=7002
 Environment=DOCKER_CONFIG=/tmp/docker
 Environment=ALLOWED_ORIGINS=$ORIGINS
 Environment=TRUST_PROXY=1
-Environment=MAX_CONCURRENT=2
+Environment=MAX_CONCURRENT=$CONCURRENT
 Environment=RATE_LIMIT_PER_MINUTE=10
 Environment=RATE_LIMIT_PER_HOUR=120
 Restart=always
@@ -122,10 +138,21 @@ systemctl enable caddy
 systemctl restart caddy
 
 echo "==> Firewall: SSH, HTTP and HTTPS only"
-ufw allow 22/tcp
-ufw allow 80/tcp
-ufw allow 443/tcp
-ufw --force enable
+if [ -f /etc/iptables/rules.v4 ] && command -v netfilter-persistent >/dev/null; then
+  # Oracle Cloud images ship iptables rules that reject everything except SSH.
+  for port in 80 443; do
+    iptables -C INPUT -p tcp --dport "$port" -m state --state NEW -j ACCEPT 2>/dev/null ||
+      iptables -I INPUT 5 -p tcp --dport "$port" -m state --state NEW -j ACCEPT
+  done
+  netfilter-persistent save >/dev/null
+  echo "    Also allow TCP 80 and 443 in the cloud console's security list / firewall."
+else
+  apt-get install -y -q ufw
+  ufw allow 22/tcp
+  ufw allow 80/tcp
+  ufw allow 443/tcp
+  ufw --force enable
+fi
 
 echo "==> Waiting for the service"
 for _ in $(seq 1 30); do
