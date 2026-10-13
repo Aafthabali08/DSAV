@@ -1,6 +1,14 @@
 # SortScope
 
-A browser-based DSA learning lab with a monochrome glass interface, curved cards, capsule controls, and reversible algorithm playback. No accounts or database. The Code Lab uses a local, isolated Docker compiler service.
+A browser-based DSA learning lab with a monochrome glass interface, curved cards, capsule controls, and reversible algorithm playback. No accounts or database.
+
+**Live site: https://sortscopea.vercel.app**
+
+| Feature                                         | Live site (Vercel)                                  | Local (`npm run dev`) |
+| ----------------------------------------------- | --------------------------------------------------- | --------------------- |
+| Sorting visualizer, comparison, data structures | ✓                                                   | ✓                     |
+| Code Lab: Python, JavaScript                    | ✓ runs in the browser                               | ✓ Docker runtime      |
+| Code Lab: C, C++, Java                          | Coming soon (enabled by setting `VITE_RUNTIME_URL`) | ✓ Docker runtime      |
 
 ## Run
 
@@ -21,7 +29,7 @@ npm run build
 npm run preview
 ```
 
-Stop the dev server before starting preview on the same port. The production artifact is `dist/`. Deploy it to any static host with build command `npm run build` and output directory `dist`. No secrets are required for local use. Static hosting covers sorting and structures; Code Lab requires the Docker-capable service described in server/README.md. Run npm start after building to serve the built frontend and compiler API together. This delivery has not been publicly published. Fonts use Google Fonts with system fallbacks; algorithm operation does not depend on the network.
+Stop the dev server before starting preview on the same port. The production artifact is `dist/`. Deploy it to any static host with build command `npm run build` and output directory `dist` (see [Deploy to Vercel](#deploy-to-vercel)). No secrets are required. Run `npm start` after building to serve the built frontend and compiler API together on one machine. Fonts use Google Fonts with system fallbacks; algorithm operation does not depend on the network.
 
 ## Features
 
@@ -41,7 +49,7 @@ Focus the visualizer region (Tab through the page or click its background): Spac
 
 Full trace storage is O(events × n), deliberately traded for reliable rewind at the 64-item cap. Algorithm space descriptions exclude trace storage. Insertion and merge intermediate states may contain duplicate IDs while a saved key/buffer holds displaced items; final identity multisets are preserved. Stable variants retain ID order on ties; textual IDs are inspectable under each chart.
 
-Comparisons count sortable value checks only. Swaps exchange distinct positions and add two main-array writes. Temporary-buffer writes, allocation, index checks and UI work are excluded. Animation is operation playback, not a runtime benchmark. Last-element Quick Sort can take quadratic time on sorted or all-equal input. Data-structure snapshots are generated from editable values and operations. Graphs accept custom undirected edges; trees are unbalanced binary search trees with unique keys. Shareable URL state, a dark theme and Heap Sort are deferred optional scope.
+Comparisons count sortable value checks only. Swaps exchange distinct positions and add two main-array writes. Temporary-buffer writes, allocation, index checks and UI work are excluded. Animation is operation playback, not a runtime benchmark. Last-element Quick Sort can take quadratic time on sorted or all-equal input. Data-structure snapshots are generated from editable values and operations. Graphs accept custom undirected edges; trees are unbalanced binary search trees with unique keys. Shareable URL state and Heap Sort are deferred optional scope.
 
 ## Verification
 
@@ -52,9 +60,9 @@ npx playwright install webkit
 npx playwright test --workers=1
 ```
 
-The browser configuration uses installed Chrome plus Playwright WebKit (Safari engine, not the Safari application). Tests cover exact reverse restoration, play/pause, reset, custom-input errors, negative values, completion, comparison, every structure example, keyboard controls, 360px/64-value overflow, and reduced motion. Screenshots are saved to `screenshots/`.
+The browser configuration uses installed Chrome plus Playwright WebKit (Safari engine, not the Safari application). The 30 browser scenarios (15 per engine) cover exact reverse restoration, play/pause, reset, custom-input errors, negative values, completion, comparison, every structure example, keyboard controls, no horizontal overflow on any page at 360px, 64-value charts, reduced motion, and all five Code Lab languages. Screenshots are saved to `screenshots/`.
 
-Engine tests cover all five algorithms, 2–64 item seeded arrays, negative values, duplicates, all-zero data, identity preservation, stable tie ordering, repeatability, valid highlights, monotonic counts and six exact metric examples. See `VERIFICATION.md` for measured results.
+The 29 unit tests cover all five sorting algorithms (2–64 item seeded arrays, negative values, duplicates, all-zero data, identity preservation, stable tie ordering, repeatability, valid highlights, monotonic counts and six exact metric examples), every structure operation, diagnostics, diagrams, hosted-mode detection, and the compiler service's origin, proxy and rate-limit policy. `npm run test:runtime` checks the Docker runner in all five languages. See `VERIFICATION.md` for measured results.
 
 ## Two-minute demo
 
@@ -73,7 +81,7 @@ Resume wording: “Built an interactive JavaScript DSA visualizer with five sort
 
 ## Code Lab
 
-C, C++, Python 3, Java and JavaScript run in real isolated runtimes. Edit source and stdin, compile/run, then inspect source lines, locals, array cells/bars, object fields, call frames and program output. Play/pause, rewind and scrub use recorded execution snapshots. Editing code or input invalidates the old trace.
+C, C++, Python 3, Java and JavaScript run in real isolated runtimes. Edit source and stdin, compile/run, then inspect source lines, locals, array cells/bars, object fields, call frames and program output. Play/pause, rewind and scrub use recorded execution snapshots. The playback controls sit above the snapshot and stay in place while it updates, so Pause is always under the pointer. Editing code or input invalidates the old trace.
 
 See [compiler setup, runtime semantics and deployment boundary](server/README.md). For runtime checks: `npm run test:runtime`. The initial image download can take several minutes. All subsequent runs reuse it. Code Lab does not require annotations or prewritten snapshot calls. C/C++ steps over function calls; JavaScript supports synchronous statement tracing. Large/complex objects are bounded previews.
 
@@ -113,6 +121,28 @@ Complexity labels follow the built operation. Graph edits, including edges, can 
 
 ## Deploy to Vercel
 
-`vercel.json` configures the build (`npm ci`, `npm run build`, output `dist`). Import the repository in Vercel, or run `npx vercel --prod`; no environment variables are needed. The visualizer, comparison and data-structure pages work fully on Vercel.
+`vercel.json` configures the build (`npm ci`, `npm run build`, output `dist`) plus asset caching and security headers. Import the repository in Vercel, or run `npx vercel --prod`; no environment variables are required. Every push to `main` redeploys. `.vercelignore` keeps screenshots, tests and scripts out of the upload; `server/` is included because the browser runtime reuses its tracers.
 
-On a hosted domain, Code Lab switches to a **browser runtime**: Python runs on Pyodide (CPython compiled to WebAssembly, loaded from jsDelivr on the first Python run, about 10 MB) and JavaScript runs in a Web Worker. Both use the same tracers as the Docker runner, so line tracing, variables, replay, errors and the 1,500-event limit behave the same. Runs are stopped after 12 seconds. On a hosted domain, Code Lab offers Python and JavaScript only, because C, C++ and Java need GCC/GDB and the JVM. Run SortScope locally with `npm run dev` for all five languages. To add them to the live site later, deploy the cloud compiler and set `VITE_RUNTIME_URL` in Vercel: see [deploy/README.md](deploy/README.md). Peak memory and CPU time are only measured by the Docker runner.
+The visualizer, comparison and data-structure pages work fully on Vercel. On a hosted domain, Code Lab switches to a **browser runtime**: Python runs on Pyodide (CPython compiled to WebAssembly, loaded from jsDelivr on the first Python run, about 10 MB) and JavaScript runs in a Web Worker. Both use the same tracers as the Docker runner, so line tracing, variables, replay, errors and the 1,500-event limit behave the same. Runs are stopped after 12 seconds. Peak memory and CPU time are only measured by the Docker runner and show "—" in the browser.
+
+C, C++ and Java need GCC/GDB and the JVM, which cannot run in a browser or on Vercel. Without a cloud compiler, the hosted Code Lab lists them as **coming soon** (disabled options) and its badge reads "Python & JS · more languages soon".
+
+### Enabling C, C++ and Java on the live site
+
+1. Run the Docker compiler on a server you control. [deploy/README.md](deploy/README.md) has a one-command setup for Ubuntu 24.04 / Debian 12, including free tiers (Oracle Cloud Always Free, Google Cloud e2-micro), with automatic HTTPS through Caddy.
+2. In Vercel, set **`VITE_RUNTIME_URL`** to that server's URL (for example `https://203-0-113-9.sslip.io`) and redeploy.
+
+All five languages are then enabled with no code changes: Python and JavaScript keep running in the browser, and C, C++ and Java go to the server. If the server is unreachable, the badge reads "cloud compiler offline" and those runs show a clear message, while everything else keeps working. In public mode the server accepts only the origins in `ALLOWED_ORIGINS`, rate-limits each visitor (`RATE_LIMIT_PER_MINUTE`, `RATE_LIMIT_PER_HOUR`) and caps concurrent runs (`MAX_CONCURRENT`). These settings are off by default, so local use is unchanged.
+
+## Project layout
+
+| Path                                                                          | Purpose                                                              |
+| ----------------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| `src/engine.js`, `src/main.js`                                                | Sorting traces, comparison and page rendering                        |
+| `src/structures.js`, `src/structure-engine.js`, `src/structure-operations.js` | Data-structure playgrounds and operations                            |
+| `src/code-lab.js`, `src/value-diagrams.js`, `src/diagnostics.js`              | Code Lab UI, memory diagrams, error parsing                          |
+| `src/browser-runtime.js`, `src/browser-runtime.worker.js`                     | In-browser Python (Pyodide) and JavaScript runtime for hosted sites  |
+| `server/index.js`, `server/policy.js`, `server/instrument.js`                 | Compiler API, public-mode request policy, JavaScript instrumentation |
+| `server/Dockerfile`, `server/runtime/`                                        | Sandbox image and per-language tracers                               |
+| `deploy/`                                                                     | Cloud compiler setup and update scripts                              |
+| `tests/`, `tests/e2e/`                                                        | Unit tests (Vitest) and browser tests (Playwright)                   |
