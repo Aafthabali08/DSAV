@@ -1,0 +1,5 @@
+*.md
+index.js
+instrument.js
+smoke.mjs
+production.js
